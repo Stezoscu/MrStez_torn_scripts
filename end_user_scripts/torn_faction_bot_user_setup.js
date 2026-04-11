@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         Torn Faction Bot - Setup & Registration
 // @namespace    tornfactionbot.setup
-// @version      1.0.0
+// @version      1.0.2
 // @description  Registers your Torn API key with the faction bot server
-// @author       MrStez
+// @author       Mr_Stez
 // @match        https://www.torn.com/*
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @connect      torn-faction-bot-production.up.railway.app
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -15,9 +16,9 @@
     // ─── CONFIG ───────────────────────────────────────────────
     const SERVER_URL = 'https://torn-faction-bot-production.up.railway.app';
     const STORAGE = {
-        TOKEN:    'tfb_token',
-        TORN_ID:  'tfb_torn_id',
-        NAME:     'tfb_torn_name',
+        TOKEN:           'tfb_token',
+        TORN_ID:         'tfb_torn_id',
+        NAME:            'tfb_torn_name',
         SETUP_DISMISSED: 'tfb_setup_dismissed',
     };
     // ──────────────────────────────────────────────────────────
@@ -242,7 +243,6 @@
 
         document.getElementById('tfb-register')?.addEventListener('click', doRegister);
 
-        // Allow Enter key in the input field
         document.getElementById('tfb-api-key')?.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') doRegister();
         });
@@ -250,7 +250,7 @@
 
     // ─── REGISTRATION ─────────────────────────────────────────
 
-    async function doRegister() {
+    function doRegister() {
         const keyInput = document.getElementById('tfb-api-key');
         const apiKey = (keyInput?.value || '').trim();
 
@@ -263,53 +263,51 @@
         const btn = document.getElementById('tfb-register');
         if (btn) btn.disabled = true;
 
-        try {
-            const res = await fetch(`${SERVER_URL}/api/auth/register`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ api_key: apiKey }),
-            });
-
-            const data = await res.json();
-
-            if (!res.ok) {
-                setStatus(data.detail || 'Registration failed', 'err');
+        GM_xmlhttpRequest({
+            method: 'POST',
+            url: `${SERVER_URL}/api/auth/register`,
+            headers: { 'Content-Type': 'application/json' },
+            data: JSON.stringify({ api_key: apiKey }),
+            onload: function(response) {
+                try {
+                    const data = JSON.parse(response.responseText);
+                    if (response.status !== 200) {
+                        setStatus(data.detail || 'Registration failed', 'err');
+                        if (btn) btn.disabled = false;
+                        return;
+                    }
+                    saveRegistration(data.token, data.torn_id, data.torn_name);
+                    setStatus(`Welcome, ${data.torn_name}!`, 'ok');
+                    setTimeout(() => {
+                        buildPanel();
+                        buildToggle();
+                    }, 1200);
+                } catch(e) {
+                    setStatus('Unexpected response from server', 'err');
+                    if (btn) btn.disabled = false;
+                }
+            },
+            onerror: function() {
+                setStatus('Could not reach server. Try again.', 'err');
                 if (btn) btn.disabled = false;
-                return;
             }
-
-            saveRegistration(data.token, data.torn_id, data.torn_name);
-
-            setStatus(`Welcome, ${data.torn_name}!`, 'ok');
-
-            // Rebuild panel to show registered state after short delay
-            setTimeout(() => {
-                buildPanel();
-                buildToggle();
-            }, 1200);
-
-        } catch (err) {
-            setStatus('Could not reach server. Try again.', 'err');
-            if (btn) btn.disabled = false;
-        }
+        });
     }
 
     // ─── PING (heartbeat) ─────────────────────────────────────
 
-    async function sendPing() {
+    function sendPing() {
         if (!isRegistered()) return;
-        try {
-            await fetch(`${SERVER_URL}/api/auth/ping`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    torn_id: parseInt(getTornId()),
-                    torn_name: getName(),
-                }),
-            });
-        } catch (_) {
-            // Silent — ping failure is non-critical
-        }
+        GM_xmlhttpRequest({
+            method: 'POST',
+            url: `${SERVER_URL}/api/auth/ping`,
+            headers: { 'Content-Type': 'application/json' },
+            data: JSON.stringify({
+                torn_id: parseInt(getTornId()),
+                torn_name: getName(),
+            }),
+            onerror: function() {}
+        });
     }
 
     // ─── TOGGLE BUTTON ────────────────────────────────────────
@@ -318,7 +316,6 @@
         const existing = document.getElementById('tfb-toggle');
         if (existing) existing.remove();
 
-        // Don't show toggle if user has dismissed and isn't registered
         if (!isRegistered() && localStorage.getItem(STORAGE.SETUP_DISMISSED)) return;
 
         const btn = document.createElement('button');
@@ -341,12 +338,10 @@
         injectStyles();
         buildToggle();
 
-        // Auto-open setup panel if not registered and not dismissed
         if (!isRegistered() && !localStorage.getItem(STORAGE.SETUP_DISMISSED)) {
             buildPanel();
         }
 
-        // Send a ping every 5 minutes while playing
         sendPing();
         setInterval(sendPing, 5 * 60 * 1000);
     }
