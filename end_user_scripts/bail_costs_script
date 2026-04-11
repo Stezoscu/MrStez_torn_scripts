@@ -1,0 +1,300 @@
+// ==UserScript==
+// @name         Torn Jail Bail Cost on Names
+// @namespace    steveo.jail.bailcost
+// @version      1.1
+// @description  Shows estimated bail cost next to jailed player names, using stored SteveO API key
+// @author       MrStez / Ace
+// @match        https://www.torn.com/jailview.php*
+// @match        https://www.torn.com/jail.php*
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    "use strict";
+
+    const API_KEY_STORAGE = "steveo_torn_api_key";
+    const CACHE_TTL_MS = 60 * 1000;
+    const MAX_CONCURRENT = 4;
+
+    const cache = new Map();
+    const queue = [];
+    let running = 0;
+    let apiKey = null;
+
+    function getApiKey() {
+        let key = localStorage.getItem(API_KEY_STORAGE);
+
+        if (!key) {
+            key = prompt("Enter your SteveO Torn API key:");
+
+            if (!key) {
+                alert("No API key entered. Bail cost script will not run.");
+                return null;
+            }
+
+            key = key.trim();
+
+            if (key.length < 10) {
+                alert("That API key looks invalid. Bail cost script will not run.");
+                return null;
+            }
+
+            localStorage.setItem(API_KEY_STORAGE, key);
+        }
+
+        return key;
+    }
+
+    function resetApiKey() {
+        localStorage.removeItem(API_KEY_STORAGE);
+        alert("Stored SteveO Torn API key cleared. Refresh the page to enter a new one.");
+    }
+
+    function addResetButton() {
+        if (document.getElementById("steveo-bail-reset-key")) return;
+
+        const btn = document.createElement("button");
+        btn.id = "steveo-bail-reset-key";
+        btn.textContent = "Reset Key";
+        btn.type = "button";
+
+        Object.assign(btn.style, {
+            position: "fixed",
+            bottom: "10px",
+            right: "10px",
+            zIndex: "99999",
+            padding: "6px 10px",
+            fontSize: "12px",
+            borderRadius: "6px",
+            border: "1px solid rgba(255,255,255,0.2)",
+            background: "#1f2a44",
+            color: "#fff",
+            cursor: "pointer",
+            opacity: "0.9"
+        });
+
+        btn.addEventListener("click", resetApiKey);
+        document.body.appendChild(btn);
+    }
+
+    function nowUnix() {
+        return Math.floor(Date.now() / 1000);
+    }
+
+    function shortMoney(value) {
+        if (!Number.isFinite(value) || value <= 0) return "0";
+
+        if (value >= 1_000_000_000) {
+            const n = value / 1_000_000_000;
+            return n >= 10 ? `${n.toFixed(0)}b` : `${n.toFixed(1).replace(/\.0$/, "")}b`;
+        }
+        if (value >= 1_000_000) {
+            const n = value / 1_000_000;
+            return n >= 10 ? `${n.toFixed(0)}m` : `${n.toFixed(1).replace(/\.0$/, "")}m`;
+        }
+        if (value >= 1_000) {
+            const n = value / 1_000;
+            return n >= 10 ? `${n.toFixed(0)}k` : `${n.toFixed(1).replace(/\.0$/, "")}k`;
+        }
+
+        return `${Math.round(value)}`;
+    }
+
+    function getPlayerIdFromAnchor(anchor) {
+        if (!anchor || !anchor.href) return null;
+        const match = anchor.href.match(/XID=(\d+)/i);
+        return match ? match[1] : null;
+    }
+
+    async function fetchProfile(playerId) {
+        const cached = cache.get(playerId);
+        const now = Date.now();
+
+        if (cached && (now - cached.fetchedAt) < CACHE_TTL_MS) {
+            return cached.data;
+        }
+
+        const url = `https://api.torn.com/user/${playerId}?selections=profile&key=${encodeURIComponent(apiKey)}`;
+        const resp = await fetch(url, { credentials: "omit" });
+        const data = await resp.json();
+
+        cache.set(playerId, {
+            fetchedAt: now,
+            data
+        });
+
+        return data;
+    }
+
+    function getRemainingJailSeconds(data) {
+        if (!data) return 0;
+
+        if (data.status && typeof data.status.until === "number" && data.status.until > nowUnix()) {
+            return data.status.until - nowUnix();
+        }
+
+        if (data.jailed && typeof data.jailed.until === "number" && data.jailed.until > nowUnix()) {
+            return data.jailed.until - nowUnix();
+        }
+
+        return 0;
+    }
+
+    function isJailed(data) {
+        if (!data) return false;
+
+        if (data.status && typeof data.status.state === "string") {
+            return data.status.state.toLowerCase() === "jail";
+        }
+
+        if (data.status && typeof data.status.description === "string") {
+            return data.status.description.toLowerCase().includes("jail");
+        }
+
+        return getRemainingJailSeconds(data) > 0;
+    }
+
+    function calculateBailCost(level, jailSeconds) {
+        const minutes = Math.ceil(jailSeconds / 60);
+        return 100 * minutes * level;
+    }
+
+    function findBadgeNearAnchor(anchor) {
+        const parent = anchor.parentElement;
+        if (!parent) return null;
+        return parent.querySelector(".steveo-bail-cost-badge");
+    }
+
+    function setBadge(anchor, text, titleText = "", colour = "#7bd389") {
+        if (!anchor) return;
+
+        let badge = findBadgeNearAnchor(anchor);
+
+        if (!badge) {
+            badge = document.createElement("span");
+            badge.className = "steveo-bail-cost-badge";
+            badge.style.marginLeft = "6px";
+            badge.style.fontSize = "11px";
+            badge.style.fontWeight = "600";
+            badge.style.opacity = "0.95";
+            anchor.insertAdjacentElement("afterend", badge);
+        }
+
+        badge.textContent = ` [Bail = ${text}]`;
+        badge.title = titleText;
+        badge.style.color = colour;
+    }
+
+    function addLoadingBadge(anchor) {
+        if (findBadgeNearAnchor(anchor)) return;
+        setBadge(anchor, "...", "Loading bail cost", "#9aa4b2");
+    }
+
+    async function processAnchor(anchor) {
+        const playerId = getPlayerIdFromAnchor(anchor);
+        if (!playerId) return;
+
+        if (anchor.dataset.steveoBailProcessed === "1") return;
+        anchor.dataset.steveoBailProcessed = "1";
+
+        addLoadingBadge(anchor);
+
+        try {
+            const data = await fetchProfile(playerId);
+
+            if (!data || data.error) {
+                const msg = data?.error?.error || "API error";
+                setBadge(anchor, "err", msg, "#d68a8a");
+                return;
+            }
+
+            if (!isJailed(data)) {
+                setBadge(anchor, "free", "Player does not appear to be jailed", "#9aa4b2");
+                return;
+            }
+
+            const level = Number(data.level || 0);
+            const jailSeconds = getRemainingJailSeconds(data);
+
+            if (!level || !jailSeconds) {
+                setBadge(anchor, "?", "Could not calculate bail cost", "#d6c58a");
+                return;
+            }
+
+            const bailCost = calculateBailCost(level, jailSeconds);
+            const shortCost = shortMoney(bailCost);
+            const mins = Math.ceil(jailSeconds / 60);
+
+            setBadge(
+                anchor,
+                shortCost,
+                `Estimated bail cost: $${bailCost.toLocaleString()} | Level ${level} | ${mins} min remaining`,
+                "#7bd389"
+            );
+        } catch (err) {
+            setBadge(anchor, "err", String(err), "#d68a8a");
+        }
+    }
+
+    function enqueue(anchor) {
+        queue.push(anchor);
+        runQueue();
+    }
+
+    function runQueue() {
+        while (running < MAX_CONCURRENT && queue.length > 0) {
+            const anchor = queue.shift();
+            running++;
+
+            processAnchor(anchor)
+                .catch(() => {})
+                .finally(() => {
+                    running--;
+                    runQueue();
+                });
+        }
+    }
+
+    function findJailProfileAnchors() {
+        return Array.from(document.querySelectorAll('a[href*="profiles.php?XID="]')).filter(anchor => {
+            const xid = getPlayerIdFromAnchor(anchor);
+            return xid && anchor.textContent.trim().length > 0;
+        });
+    }
+
+    function scanPage() {
+        const anchors = findJailProfileAnchors();
+
+        for (const anchor of anchors) {
+            if (anchor.dataset.steveoBailQueued === "1") continue;
+            anchor.dataset.steveoBailQueued = "1";
+            enqueue(anchor);
+        }
+    }
+
+    function startObserver() {
+        const observer = new MutationObserver(() => {
+            scanPage();
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+    }
+
+    function init() {
+        apiKey = getApiKey();
+        if (!apiKey) return;
+
+        addResetButton();
+        scanPage();
+        startObserver();
+    }
+
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", init);
+    } else {
+        init();
+    }
+})();
