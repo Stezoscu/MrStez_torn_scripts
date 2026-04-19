@@ -250,6 +250,28 @@
 
     // ─── REGISTRATION ─────────────────────────────────────────
 
+    const IS_PDA = typeof PDA_httpPost === 'function';
+    const IS_GM  = typeof GM_xmlhttpRequest === 'function';
+
+    function httpPost(url, body, onSuccess, onError) {
+        const headers = { 'Content-Type': 'application/json' };
+        if (IS_PDA) {
+            PDA_httpPost(url, headers, body)
+                .then(r => onSuccess(r))
+                .catch(() => onError());
+        } else if (IS_GM) {
+            GM_xmlhttpRequest({
+                method: 'POST', url, headers, data: body,
+                onload: r => onSuccess(r.responseText, r.status),
+                onerror: () => onError()
+            });
+        } else {
+            fetch(url, { method: 'POST', headers, body })
+                .then(r => r.text().then(t => onSuccess(t, r.status)))
+                .catch(() => onError());
+        }
+    }
+
     function doRegister() {
         const keyInput = document.getElementById('tfb-api-key');
         const apiKey = (keyInput?.value || '').trim();
@@ -263,51 +285,47 @@
         const btn = document.getElementById('tfb-register');
         if (btn) btn.disabled = true;
 
-        GM_xmlhttpRequest({
-            method: 'POST',
-            url: `${SERVER_URL}/api/auth/register`,
-            headers: { 'Content-Type': 'application/json' },
-            data: JSON.stringify({ api_key: apiKey }),
-            onload: function(response) {
+        httpPost(
+            `${SERVER_URL}/api/auth/register`,
+            JSON.stringify({ api_key: apiKey }),
+            (responseText, status) => {
                 try {
-                    const data = JSON.parse(response.responseText);
-                    if (response.status !== 200) {
+                    const data = JSON.parse(responseText);
+                    if (status && status !== 200) {
                         setStatus(data.detail || 'Registration failed', 'err');
+                        if (btn) btn.disabled = false;
+                        return;
+                    }
+                    if (data.detail) {
+                        setStatus(data.detail, 'err');
                         if (btn) btn.disabled = false;
                         return;
                     }
                     saveRegistration(data.token, data.torn_id, data.torn_name);
                     setStatus(`Welcome, ${data.torn_name}!`, 'ok');
-                    setTimeout(() => {
-                        buildPanel();
-                        buildToggle();
-                    }, 1200);
+                    setTimeout(() => { buildPanel(); buildToggle(); }, 1200);
                 } catch(e) {
                     setStatus('Unexpected response from server', 'err');
                     if (btn) btn.disabled = false;
                 }
             },
-            onerror: function() {
+            () => {
                 setStatus('Could not reach server. Try again.', 'err');
                 if (btn) btn.disabled = false;
             }
-        });
+        );
     }
 
     // ─── PING (heartbeat) ─────────────────────────────────────
 
     function sendPing() {
         if (!isRegistered()) return;
-        GM_xmlhttpRequest({
-            method: 'POST',
-            url: `${SERVER_URL}/api/auth/ping`,
-            headers: { 'Content-Type': 'application/json' },
-            data: JSON.stringify({
-                torn_id: parseInt(getTornId()),
-                torn_name: getName(),
-            }),
-            onerror: function() {}
-        });
+        httpPost(
+            `${SERVER_URL}/api/auth/ping`,
+            JSON.stringify({ torn_id: parseInt(getTornId()), torn_name: getName() }),
+            () => {}, // silent success
+            () => {}  // silent error
+        );
     }
 
     // ─── TOGGLE BUTTON ────────────────────────────────────────
