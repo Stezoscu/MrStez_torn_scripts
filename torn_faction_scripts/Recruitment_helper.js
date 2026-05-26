@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '1.2.0';
+  const VERSION = '1.3.0';
 
   const LS = {
     ENABLED: 'mrstez_recruit_checker_enabled',
@@ -40,7 +40,6 @@
     minXanaxPerDayGreen: 0.18,
     minXanaxPerDayAmber: 0.08,
     veryYoungAccountDays: 45,
-    youngAccountDays: 120,
     showDebug: false
   };
 
@@ -81,47 +80,9 @@
     return /profiles\.php\?XID=\d+/.test(location.href);
   }
 
-  function isFactionApplicationsPage() {
-    return location.href.includes('factions.php') &&
-      (
-        location.href.includes('applications') ||
-        location.href.includes('tab=applications') ||
-        document.body.innerText.toLowerCase().includes('applications')
-      );
-  }
-
   function getProfileIdFromUrl() {
     const match = location.href.match(/profiles\.php\?XID=(\d+)/);
     return match ? match[1] : null;
-  }
-
-  function getApplicationPlayerIds() {
-    const ids = new Set();
-
-    const possibleRows = [...document.querySelectorAll('tr, li, div')].filter(el => {
-      const text = el.innerText || '';
-      return (
-        text.includes('ACCEPT') ||
-        text.includes('DECLINE') ||
-        text.includes('Application') ||
-        text.includes('Expires')
-      );
-    });
-
-    possibleRows.forEach(row => {
-      row.querySelectorAll('a[href*="profiles.php?XID="]').forEach(a => {
-        const match = a.href.match(/XID=(\d+)/);
-        if (match) ids.add(match[1]);
-      });
-
-      const html = row.innerHTML || '';
-      [...html.matchAll(/XID=(\d+)/g)].forEach(m => ids.add(m[1]));
-      [...html.matchAll(/userID[="'\s:]+(\d+)/gi)].forEach(m => ids.add(m[1]));
-      [...html.matchAll(/user_id[="'\s:]+(\d+)/gi)].forEach(m => ids.add(m[1]));
-      [...html.matchAll(/player_id[="'\s:]+(\d+)/gi)].forEach(m => ids.add(m[1]));
-    });
-
-    return [...ids];
   }
 
   function cacheKey(playerId) {
@@ -530,17 +491,18 @@
 
       .mrs-mini-tab {
         position: fixed;
-        top: 90px;
-        right: 12px;
+        left: 10px;
+        bottom: 92px;
         z-index: 999999;
         background: linear-gradient(90deg, #6d28d9, #2563eb);
         color: white;
         border: none;
-        border-radius: 10px;
-        padding: 8px 10px;
+        border-radius: 999px;
+        padding: 5px 9px;
         cursor: pointer;
-        box-shadow: 0 8px 30px rgba(0,0,0,0.35);
-        font-size: 13px;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+        font-size: 11px;
+        opacity: 0.88;
       }
     `;
 
@@ -556,16 +518,20 @@
       tab = document.createElement('button');
       tab.id = 'mrs-mini-tab';
       tab.className = 'mrs-mini-tab';
-      tab.textContent = 'Recruit';
+      tab.textContent = 'RC';
       document.body.appendChild(tab);
 
       tab.addEventListener('click', () => {
+        if (!isProfilePage()) return;
+
         localStorage.setItem(LS.MINIMISED, 'false');
         panel.style.display = 'block';
-        tab.remove();
+        tab.style.display = 'none';
         render(true);
       });
     }
+
+    tab.style.display = isProfilePage() ? 'block' : 'none';
   }
 
   function createPanel() {
@@ -590,7 +556,7 @@
           <button id="mrs-settings-btn">Settings</button>
         </div>
 
-        <div id="mrs-status">Waiting for profile/application...</div>
+        <div id="mrs-status">Waiting for profile...</div>
         <div id="mrs-results"></div>
 
         <div id="mrs-settings" style="display:none;">
@@ -624,7 +590,9 @@
     addStyles();
     wirePanel(panel);
 
-    if (localStorage.getItem(LS.MINIMISED) !== 'false') {
+    if (!isProfilePage()) {
+      panel.style.display = 'none';
+    } else if (localStorage.getItem(LS.MINIMISED) !== 'false') {
       showMiniTab(panel);
     }
 
@@ -761,12 +729,25 @@
 
   async function render(force = false) {
     const panel = createPanel();
-    const status = panel.querySelector('#mrs-status');
-    const results = panel.querySelector('#mrs-results');
+    const tab = document.getElementById('mrs-mini-tab');
 
-    if (localStorage.getItem(LS.MINIMISED) === 'true') {
+    if (!isProfilePage()) {
+      panel.style.display = 'none';
+      if (tab) tab.style.display = 'none';
       return;
     }
+
+    if (localStorage.getItem(LS.MINIMISED) === 'true') {
+      panel.style.display = 'none';
+      if (tab) tab.style.display = 'block';
+      return;
+    }
+
+    if (tab) tab.style.display = 'none';
+    panel.style.display = 'block';
+
+    const status = panel.querySelector('#mrs-status');
+    const results = panel.querySelector('#mrs-results');
 
     if (!enabled) {
       status.textContent = 'Recruitment checker is disabled.';
@@ -780,70 +761,34 @@
       return;
     }
 
-    if (isProfilePage()) {
-      const playerId = getProfileIdFromUrl();
-      currentProfileId = playerId;
+    const playerId = getProfileIdFromUrl();
+    currentProfileId = playerId;
 
-      status.textContent = `Checking player ${playerId}...`;
-
-      try {
-        if (force) localStorage.removeItem(cacheKey(playerId));
-        const data = await apiCall(playerId);
-        const evaluation = evaluateRecruit(data);
-        results.innerHTML = renderCard(playerId, data, evaluation);
-        status.textContent = `Profile check complete. Cache: ${settings.cacheMinutes} mins.`;
-      } catch (err) {
-        status.textContent = `API error: ${err.message}`;
-        results.innerHTML = '';
-      }
-
-      return;
-    }
-
-    if (isFactionApplicationsPage()) {
-      const playerIds = getApplicationPlayerIds();
-      currentProfileId = null;
-
-      if (!playerIds.length) {
-        status.textContent = 'Applications page detected, but no applicant IDs found yet.';
-        results.innerHTML = '';
-        return;
-      }
-
-      status.textContent = `Checking ${playerIds.length} visible applicant(s)...`;
+    if (!playerId) {
+      status.textContent = 'No profile ID found.';
       results.innerHTML = '';
-
-      const limited = playerIds.slice(0, 10);
-
-      for (const playerId of limited) {
-        try {
-          if (force) localStorage.removeItem(cacheKey(playerId));
-          const data = await apiCall(playerId);
-          const evaluation = evaluateRecruit(data);
-          results.innerHTML += renderCard(playerId, data, evaluation);
-        } catch (err) {
-          results.innerHTML += `
-            <div class="mrs-card">
-              <strong>Player ${playerId}</strong>
-              <div class="mrs-risk">API error: ${escapeHtml(err.message)}</div>
-            </div>
-          `;
-        }
-      }
-
-      status.textContent = `Application check complete. Showing ${limited.length}/${playerIds.length}.`;
       return;
     }
 
-    status.textContent = 'Open a player profile or faction applications page.';
-    results.innerHTML = '';
+    status.textContent = `Checking player ${playerId}...`;
+
+    try {
+      if (force) localStorage.removeItem(cacheKey(playerId));
+      const data = await apiCall(playerId);
+      const evaluation = evaluateRecruit(data);
+      results.innerHTML = renderCard(playerId, data, evaluation);
+      status.textContent = `Profile check complete. Cache: ${settings.cacheMinutes} mins.`;
+    } catch (err) {
+      status.textContent = `API error: ${err.message}`;
+      results.innerHTML = '';
+    }
   }
 
   function boot() {
     createPanel();
 
-    if (localStorage.getItem(LS.MINIMISED) !== 'true') {
-      render();
+    if (isProfilePage()) {
+      showMiniTab(createPanel());
     }
 
     setInterval(() => {
@@ -854,10 +799,8 @@
     }, 1000);
 
     const observer = new MutationObserver(() => {
-      if (enabled && (isFactionApplicationsPage() || isProfilePage())) {
-        clearTimeout(window.__mrsRecruitRenderTimer);
-        window.__mrsRecruitRenderTimer = setTimeout(render, 1000);
-      }
+      clearTimeout(window.__mrsRecruitRenderTimer);
+      window.__mrsRecruitRenderTimer = setTimeout(render, 1000);
     });
 
     observer.observe(document.body, {
