@@ -2,6 +2,8 @@
 // @name         Torn Net Worth Display
 // @namespace    steveo.profile.networth
 // @version      1.1
+// @updateURL    https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_user_scripts/end_user_scripts/netwoth_on_profile.js
+// @downloadURL  https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_user_scripts/end_user_scripts/netwoth_on_profile.js
 // @description  Display a player's net worth on their profile page
 // @author       MrStez
 // @match        https://www.torn.com/profiles.php*

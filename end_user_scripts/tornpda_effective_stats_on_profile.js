@@ -2,6 +2,8 @@
 // @name         Torn Effective Stats Inline
 // @namespace    stez.effective.stats.inline
 // @version      3.2.0
+// @updateURL    https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_user_scripts/end_user_scripts/tornpda_effective_stats_on_profile.js
+// @downloadURL  https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_user_scripts/end_user_scripts/tornpda_effective_stats_on_profile.js
 // @description  Shows effective battle stats inline on Torn home page
 // @author       MrStez
 // @match        https://www.torn.com/index.php*

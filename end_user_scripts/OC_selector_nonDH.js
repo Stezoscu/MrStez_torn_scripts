@@ -2,6 +2,8 @@
 // @name         Torn OC Best Role Helper (Member)
 // @namespace    ace.torn.oc.ev
 // @version      1.2.0
+// @updateURL    https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_user_scripts/end_user_scripts/OC_selector_nonDH.js
+// @downloadURL  https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_user_scripts/end_user_scripts/OC_selector_nonDH.js
 // @description  Member-only OC role recommender using EV, CPR safety filtering, API key settings, caching, and direct links
 // @author       Rat, MrStez and Ace
 // @match        https://www.torn.com/*

@@ -2,6 +2,8 @@
 // @name         Torn Faction Controls - Max Balance Button
 // @namespace    https://synyega.com/torn
 // @version      1.0
+// @updateURL    https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_faction_scripts/Faction_Max_balance_helper.js
+// @downloadURL  https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_faction_scripts/Faction_Max_balance_helper.js
 // @author       MrStez
 // @description  Adds a "Max" button that fills the Amount box with the selected member's total balance on the faction controls page.
 // @match        https://www.torn.com/factions.php*
