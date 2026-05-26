@@ -2,8 +2,8 @@
 // @name         Torn OC Best Role Helper - DarkHearts Member DOM
 // @namespace    mrstez.torn.oc.member
 // @version      1.4.0
-// @updateURL    https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_user_scripts/torn_faction_scripts/OC_Choice_Helper_DH.js
-// @downloadURL  https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_user_scripts/torn_faction_scripts/OC_Choice_Helper_DH.js
+// @updateURL    https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_faction_scripts/OC_Choice_Helper_DH.js
+// @downloadURL  https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_faction_scripts/OC_Choice_Helper_DH.js
 // @description  DarkHearts member OC helper using live DOM first, optional API enrichment, DH CPR rules, EV scoring and item/deep links where available
 // @author       Rat, MrStez and Ace
 // @match        https://www.torn.com/*

@@ -2,6 +2,8 @@
 // @name         Torn PDA - Faction War Risk / Revive Check
 // @namespace    steveo.faction.warriskrevive
 // @version      1.4
+// @updateURL    https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_faction_scripts/Combi_Faction_Checks_Script.js
+// @downloadURL  https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_faction_scripts/Combi_Faction_Checks_Script.js
 // @description  Checks faction war risk, inactivity, federal status, and revive settings
 // @author       MrStez / Ace
 // @match        https://www.torn.com/factions.php*

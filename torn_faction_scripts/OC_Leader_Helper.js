@@ -2,8 +2,8 @@
 // @name         Torn OC Helper Leader (Recruiting + Planning)
 // @namespace    ace.torn.oc.helper
 // @version      1.3.0
-// @updateURL    https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_user_scripts/torn_faction_scripts/OC_Leader_Helper.js
-// @downloadURL  https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_user_scripts/torn_faction_scripts/OC_Leader_Helper.js
+// @updateURL    https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_faction_scripts/OC_Leader_Helper.js
+// @downloadURL  https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_faction_scripts/OC_Leader_Helper.js
 // @description  Best role picker plus CPR and missing-item leadership checks for faction OC page
 // @author       MrStez and Rat
 // @match        https://www.torn.com/*

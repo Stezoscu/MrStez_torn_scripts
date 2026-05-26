@@ -2,6 +2,8 @@
 // @name         Torn - Opponent Activity / Stats + BSP
 // @namespace    steveo.faction.opponent.activity.bsp
 // @version      1.2
+// @updateURL    https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_war_scripts/opponent_review_script.js
+// @downloadURL  https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_war_scripts/opponent_review_script.js
 // @description  Shows opponent faction grouped by activity or stats, with best-effort BSP stats
 // @author       MrStez / Ace
 // @match        https://www.torn.com/factions.php*
