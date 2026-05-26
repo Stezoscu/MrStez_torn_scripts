@@ -1,0 +1,1159 @@
+// ==UserScript==
+// @name         Torn OC Best Role Helper (Member)
+// @namespace    ace.torn.oc.ev
+// @version      1.2.0
+// @description  Member-only OC role recommender using EV, CPR safety filtering, API key settings, caching, and direct links
+// @author       Rat, MrStez and Ace
+// @match        https://www.torn.com/*
+// @grant        none
+// ==/UserScript==
+
+(function () {
+  'use strict';
+
+  /**********************************************************************
+   * Torn OC Best Role Helper - MEMBER SCRIPT ONLY
+   *
+   * Does:
+   * - recommends the best available OC role for the logged-in member
+   * - uses Torn API v2 faction crimes endpoint
+   * - uses local crime weights and payout tables
+   * - calculates EV using CPR, role weights, payout, members, and stall timing
+   * - provides direct crime links
+   * - provides item market links
+   * - supports TornPDA and browser
+   * - SPA-safe
+   * - API key set/change/clear support
+   * - lightweight localStorage caching
+   * - Safe Mode filtering to avoid risky roles
+   *
+   * Does NOT do leader features:
+   * - no CPR warning lists
+   * - no missing item leadership checks
+   * - no locate/remove buttons
+   * - no planning-stage management
+   * - no not-in-OC list
+   **********************************************************************/
+
+  const SCRIPT = {
+    name: 'OC Best Role Helper',
+    version: '1.2.0',
+    storagePrefix: 'ace.oc.member.',
+    panelId: 'ace-best-oc-role-panel',
+    buttonId: 'ace-best-oc-role-btn',
+    stylesId: 'ace-best-oc-role-styles'
+  };
+
+  const STORAGE = {
+    apiKey: SCRIPT.storagePrefix + 'apiKey',
+    cache: SCRIPT.storagePrefix + 'cache.v2.faction.crimes.recruiting',
+    settings: SCRIPT.storagePrefix + 'settings'
+  };
+
+  const API = {
+    url: 'https://api.torn.com/v2/faction/crimes?cat=recruiting',
+    cacheTtlMs: 2 * 60 * 1000
+  };
+
+  const DEFAULT_SETTINGS = {
+    safeMode: true,
+    cacheEnabled: true,
+    safeModeProfile: 'balanced'
+  };
+
+  /**
+   * Safe mode profiles.
+   *
+   * cprFloor:
+   *   hard minimum CPR for the role.
+   *
+   * highImpactWeight:
+   *   role weight at/above this is considered high-impact.
+   *
+   * highImpactCprFloor:
+   *   extra CPR floor for important/high-weight roles.
+   *
+   * maxRiskDamageRatio:
+   *   estimated CPR damage divided by payoutMax.
+   *   Example: 0.10 means do not recommend roles where the expected
+   *   damage to success/payout is above 10% of max payout.
+   */
+  const SAFE_PROFILES = {
+    cautious: {
+      label: 'Cautious',
+      cprFloor: 70,
+      highImpactWeight: 0.25,
+      highImpactCprFloor: 80,
+      maxRiskDamageRatio: 0.075
+    },
+    balanced: {
+      label: 'Balanced',
+      cprFloor: 60,
+      highImpactWeight: 0.30,
+      highImpactCprFloor: 70,
+      maxRiskDamageRatio: 0.12
+    },
+    loose: {
+      label: 'Loose',
+      cprFloor: 50,
+      highImpactWeight: 0.35,
+      highImpactCprFloor: 60,
+      maxRiskDamageRatio: 0.18
+    }
+  };
+
+  // --- Crime weights (position_id → weight) ---
+  const crimeWeights = {
+    "Mob Mentality": { "P1": 0.34, "P2": 0.26, "P3": 0.18, "P4": 0.23 },
+    "Pet Project": { "P1": 0, "P2": 0, "P3": 0 },
+    "Best of the Lot": { "P1": 0, "P2": 0, "P3": 0 },
+    "Cash Me if You Can": { "P1": 0.50, "P2": 0.22, "P3": 0.28 },
+    "Smoke and Wing Mirrors": { "P1": 0.51, "P2": 0.27, "P3": 0.09, "P4": 0.13 },
+    "Market Forces": { "P1": 0.29, "P2": 0.27, "P3": 0.16, "P4": 0.05, "P5": 0.23 },
+    "Gaslight the Way": { "P1": 0.09, "P2": 0.10, "P3": 0.27, "P4": 0, "P5": 0.41, "P6": 0.13 },
+    "Snow Blind": { "P1": 0.48, "P2": 0.36, "P3": 0.08, "P4": 0.08 },
+    "Stage Fright": { "P1": 0.16, "P2": 0.20, "P3": 0.03, "P4": 0.09, "P5": 0.06, "P6": 0.46 },
+    "No Reserve": { "P1": 0.31, "P2": 0.38, "P3": 0.31 },
+    "Counter Offer": { "P1": 0.36, "P2": 0.07, "P3": 0.12, "P4": 0.17, "P5": 0.28 },
+    "Leave No Trace": { "P1": 0.29, "P2": 0.34, "P3": 0.37 },
+    "Bidding War": { "P1": 0.07, "P2": 0.13, "P3": 0.22, "P4": 0.32, "P5": 0.08, "P6": 0.18 },
+    "Honey Trap": { "P1": 0.27, "P2": 0.31, "P3": 0.42 },
+    "Blast from the Past": { "P1": 0.11, "P2": 0.12, "P3": 0.24, "P4": 0.16, "P5": 0.34, "P6": 0.03 },
+    "Clinical Precision": { "P1": 0.43, "P2": 0.19, "P3": 0.16, "P4": 0.22 },
+    "Break the Bank": { "P1": 0.13, "P2": 0.14, "P3": 0.10, "P4": 0.03, "P5": 0.32, "P6": 0.29 },
+    "Stacking the Deck": { "P1": 0.23, "P2": 0.03, "P3": 0.26, "P4": 0.48 },
+    "Ace in the Hole": { "P1": 0.21, "P2": 0.18, "P3": 0.25, "P4": 0.28, "P5": 0.08 }
+  };
+
+  // --- Crime min/max payouts ---
+  const crimePayouts = {
+    "Mob Mentality": { min: 829625, max: 1371357 },
+    "Pet Project": { min: 414000, max: 800000 },
+    "Best of the Lot": { min: 810000, max: 1900000 },
+    "Cash Me if You Can": { min: 856800, max: 1555062 },
+    "Smoke and Wing Mirrors": { min: 2100000, max: 4700000 },
+    "Market Forces": { min: 4691974, max: 8453868 },
+    "Gaslight the Way": { min: 4798464, max: 7975605 },
+    "Snow Blind": { min: 6170615, max: 10331828 },
+    "Stage Fright": { min: 12450000, max: 24900000 },
+    "No Reserve": { min: 25715641, max: 42919528 },
+    "Counter Offer": { min: 12350114, max: 33918610 },
+    "Leave No Trace": { min: 7499500, max: 12990583 },
+    "Bidding War": { min: 51431283, max: 85639056 },
+    "Honey Trap": { min: 14775212, max: 25643705 },
+    "Blast from the Past": { min: 99931212, max: 167566309 },
+    "Clinical Precision": { min: 66239666, max: 117161350 },
+    "Break the Bank": { min: 216237500, max: 376145789 },
+    "Stacking the Deck": { min: 152170777, max: 250765713 },
+    "Ace in the Hole": { min: 190213472, max: 313457142 }
+  };
+
+  const P = 0.5;
+  const K = 0.5;
+
+  let btn = null;
+  let panel = null;
+  let observer = null;
+  let lastUrl = location.href;
+
+  const warnedMissingWeights = new Set();
+  const warnedMissingPayouts = new Set();
+
+  function isCrimesTab() {
+    return location.pathname === '/factions.php'
+      && location.href.includes('step=your')
+      && location.href.includes('type=1')
+      && location.href.includes('#/tab=crimes');
+  }
+
+  function getSettings() {
+    try {
+      const raw = localStorage.getItem(STORAGE.settings);
+      return Object.assign({}, DEFAULT_SETTINGS, raw ? JSON.parse(raw) : {});
+    } catch (e) {
+      return Object.assign({}, DEFAULT_SETTINGS);
+    }
+  }
+
+  function saveSettings(settings) {
+    localStorage.setItem(STORAGE.settings, JSON.stringify(Object.assign({}, DEFAULT_SETTINGS, settings || {})));
+  }
+
+  function getApiKey() {
+    return localStorage.getItem(STORAGE.apiKey) || '';
+  }
+
+  function setApiKey(key) {
+    if (!key) return;
+    localStorage.setItem(STORAGE.apiKey, key.trim());
+  }
+
+  function clearApiKey() {
+    localStorage.removeItem(STORAGE.apiKey);
+  }
+
+  function clearCache() {
+    localStorage.removeItem(STORAGE.cache);
+  }
+
+  function injectStyles() {
+    if (document.getElementById(SCRIPT.stylesId)) return;
+
+    const style = document.createElement('style');
+    style.id = SCRIPT.stylesId;
+    style.textContent = `
+      #${SCRIPT.buttonId} {
+        opacity: 1 !important;
+        mix-blend-mode: normal !important;
+        filter: none !important;
+        backdrop-filter: none !important;
+        isolation: isolate !important;
+        transform: translateZ(0) !important;
+      }
+
+      #${SCRIPT.panelId} {
+        position: fixed !important;
+        opacity: 1 !important;
+        background: #111 !important;
+        background-color: #111 !important;
+        color: #eee !important;
+        mix-blend-mode: normal !important;
+        filter: none !important;
+        backdrop-filter: none !important;
+        isolation: isolate !important;
+        transform: translateZ(0) !important;
+      }
+
+      #${SCRIPT.panelId} * {
+        opacity: 1 !important;
+        mix-blend-mode: normal !important;
+        filter: none !important;
+        backdrop-filter: none !important;
+        text-shadow: none !important;
+        box-sizing: border-box !important;
+      }
+
+      #${SCRIPT.panelId} a {
+        color: #65a9ff !important;
+        text-decoration: underline !important;
+      }
+
+      #${SCRIPT.panelId} button,
+      #${SCRIPT.panelId} select,
+      #${SCRIPT.panelId} input {
+        font: inherit !important;
+      }
+
+      .ace-oc-row {
+        margin: 6px 0;
+      }
+
+      .ace-oc-muted {
+        color: #aaa !important;
+      }
+
+      .ace-oc-small {
+        font-size: 12px !important;
+      }
+
+      .ace-oc-good {
+        color: #9eff9e !important;
+      }
+
+      .ace-oc-warn {
+        color: #ffd56a !important;
+      }
+
+      .ace-oc-bad {
+        color: #ff8f8f !important;
+      }
+
+      .ace-oc-divider {
+        border-top: 1px solid #333;
+        margin: 8px 0;
+      }
+
+      .ace-oc-btn {
+        border: 1px solid #555 !important;
+        background: #222 !important;
+        color: #eee !important;
+        border-radius: 5px !important;
+        padding: 4px 7px !important;
+        cursor: pointer !important;
+        margin: 2px !important;
+      }
+
+      .ace-oc-btn-primary {
+        background: #2a4cff !important;
+        border-color: #4b66ff !important;
+        color: #fff !important;
+      }
+
+      .ace-oc-btn-danger {
+        background: #5b1e1e !important;
+        border-color: #8a3434 !important;
+        color: #fff !important;
+      }
+
+      .ace-oc-pill {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 999px;
+        border: 1px solid #444;
+        background: #1c1c1c;
+        margin-left: 4px;
+        font-size: 11px;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function createUi() {
+    if (document.getElementById(SCRIPT.buttonId)) return;
+
+    btn = document.createElement('button');
+    btn.id = SCRIPT.buttonId;
+    btn.textContent = 'Best OC Role';
+    Object.assign(btn.style, {
+      position: 'fixed',
+      bottom: '52px',
+      right: '12px',
+      zIndex: '99999',
+      padding: '6px 10px',
+      background: '#2a4cff',
+      color: '#fff',
+      border: 'none',
+      borderRadius: '6px',
+      fontSize: '13px',
+      cursor: 'pointer',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
+    });
+    document.body.appendChild(btn);
+
+    panel = document.createElement('div');
+    panel.id = SCRIPT.panelId;
+    Object.assign(panel.style, {
+      position: 'fixed',
+      bottom: '100px',
+      right: '12px',
+      width: '90%',
+      maxWidth: '380px',
+      maxHeight: '70vh',
+      overflowY: 'auto',
+      background: '#111',
+      backgroundColor: '#111',
+      color: '#eee',
+      border: '1px solid #444',
+      borderRadius: '8px',
+      padding: '10px',
+      zIndex: '99999',
+      display: 'none',
+      fontSize: '13px',
+      lineHeight: '1.4',
+      boxShadow: '0 4px 12px rgba(0,0,0,0.35)',
+      opacity: '1',
+      mixBlendMode: 'normal',
+      filter: 'none',
+      backdropFilter: 'none',
+      isolation: 'isolate'
+    });
+    document.body.appendChild(panel);
+
+    btn.onclick = () => {
+      const opening = panel.style.display === 'none';
+      panel.style.display = opening ? 'block' : 'none';
+      if (opening) renderShellAndFetch(false);
+    };
+  }
+
+  function removeUi() {
+    document.getElementById(SCRIPT.buttonId)?.remove();
+    document.getElementById(SCRIPT.panelId)?.remove();
+    btn = null;
+    panel = null;
+  }
+
+  function renderShellAndFetch(forceRefresh) {
+    if (!panel) return;
+
+    const key = getApiKey();
+    if (!key) {
+      renderNoKey();
+      return;
+    }
+
+    fetchCrimes(forceRefresh);
+  }
+
+  function renderNoKey() {
+    if (!panel) return;
+
+    panel.innerHTML = `
+      ${renderHeader()}
+      <div class="ace-oc-row ace-oc-warn">
+        No API key saved.
+      </div>
+      <div class="ace-oc-row ace-oc-small ace-oc-muted">
+        This member helper currently needs a Torn API key that can read faction crimes.
+        If your key does not have faction access, Torn may return a permission error.
+      </div>
+      <div class="ace-oc-row">
+        <button class="ace-oc-btn ace-oc-btn-primary" data-ace-action="set-key">Set API Key</button>
+      </div>
+      ${renderFooterNote()}
+    `;
+
+    bindPanelActions();
+  }
+
+  async function fetchCrimes(forceRefresh) {
+    if (!panel) return;
+
+    const key = getApiKey();
+    const settings = getSettings();
+
+    if (!key) {
+      renderNoKey();
+      return;
+    }
+
+    panel.innerHTML = `
+      ${renderHeader()}
+      <div class="ace-oc-row">Loading OC data...</div>
+      <div class="ace-oc-row ace-oc-small ace-oc-muted">
+        ${settings.cacheEnabled && !forceRefresh ? 'Checking cache first.' : 'Forced refresh requested.'}
+      </div>
+    `;
+    bindPanelActions();
+
+    try {
+      let data = null;
+      let source = 'api';
+      let cacheAgeText = '';
+
+      if (settings.cacheEnabled && !forceRefresh) {
+        const cached = readCache();
+        if (cached && cached.data) {
+          data = cached.data;
+          source = 'cache';
+          cacheAgeText = getCacheAgeText(cached.savedAt);
+        }
+      }
+
+      if (!data) {
+        const url = `${API.url}&key=${encodeURIComponent(key)}`;
+        const res = await fetch(url);
+        data = await res.json();
+
+        if (data.error) {
+          renderApiError(data.error);
+          return;
+        }
+
+        if (settings.cacheEnabled) {
+          writeCache(data);
+        }
+      }
+
+      if (!data.crimes || !Array.isArray(data.crimes) || data.crimes.length === 0) {
+        renderMessage(
+          'No recruiting OCs found.',
+          'The API responded successfully, but no recruiting organised crimes were returned.'
+        );
+        return;
+      }
+
+      const result = processCrimes(data.crimes, settings);
+      renderResult(result, source, cacheAgeText);
+    } catch (e) {
+      renderNetworkError(e);
+    }
+  }
+
+  function readCache() {
+    try {
+      const raw = localStorage.getItem(STORAGE.cache);
+      if (!raw) return null;
+
+      const parsed = JSON.parse(raw);
+      if (!parsed || !parsed.savedAt || !parsed.data) return null;
+
+      const age = Date.now() - parsed.savedAt;
+      if (age > API.cacheTtlMs) return null;
+
+      return parsed;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function writeCache(data) {
+    try {
+      localStorage.setItem(STORAGE.cache, JSON.stringify({
+        savedAt: Date.now(),
+        data
+      }));
+    } catch (e) {
+      console.warn('[OC Best Role] Failed to write cache:', e);
+    }
+  }
+
+  function getCacheAgeText(savedAt) {
+    if (!savedAt) return '';
+    const seconds = Math.max(0, Math.round((Date.now() - savedAt) / 1000));
+    if (seconds < 60) return `${seconds}s old`;
+    return `${Math.round(seconds / 60)}m old`;
+  }
+
+  function processCrimes(crimes, settings) {
+    const rows = [];
+    const rejected = [];
+    let consideredCount = 0;
+    let openRoleCount = 0;
+    let missingPayoutCount = 0;
+
+    for (const crime of crimes) {
+      if (!crime.slots || !crime.slots.length) continue;
+
+      const members = crime.slots.length;
+      let totalRemaining = 0;
+      let filled = 0;
+
+      for (const slot of crime.slots) {
+        if (slot.user) {
+          totalRemaining += 100 - (slot.user.progress || 0);
+          filled++;
+        } else {
+          totalRemaining += 100;
+        }
+      }
+
+      const stallHours = totalRemaining * 0.24;
+
+      for (const slot of crime.slots) {
+        if (slot.user) continue;
+
+        openRoleCount++;
+
+        const payoutMax = crimePayouts[crime.name]?.max;
+        if (!payoutMax) {
+          missingPayoutCount++;
+          if (!warnedMissingPayouts.has(crime.name)) {
+            console.warn(`[OC Best Role] Missing payout data for crime: ${crime.name}. Skipping it.`);
+            warnedMissingPayouts.add(crime.name);
+          }
+          continue;
+        }
+
+        let weight = crimeWeights[crime.name]?.[slot.position_id];
+        let usedWeightFallback = false;
+
+        if (weight == null) {
+          weight = 1 / members;
+          usedWeightFallback = true;
+          if (!warnedMissingWeights.has(crime.name)) {
+            console.warn(`[OC Best Role] Missing weight data for crime: ${crime.name}. Using equal weighting fallback.`);
+            warnedMissingWeights.add(crime.name);
+          }
+        }
+
+        const cpr = normaliseCpr(slot.checkpoint_pass_rate);
+        const risk = calculateRisk(weight, payoutMax, cpr);
+        const ev = estPayout(weight, payoutMax, cpr, stallHours, members, filled);
+
+        if (ev == null || Number.isNaN(ev)) continue;
+
+        consideredCount++;
+
+        const row = {
+          crime_id: crime.id,
+          crime: crime.name,
+          role: `${slot.position || 'Role'} ${slot.position_number || ''}`.trim(),
+          positionId: slot.position_id || '',
+          ev,
+          cpr,
+          stall: stallHours,
+          itemId: slot.item_requirement?.id || null,
+          itemName: slot.item_requirement?.name || null,
+          members,
+          filled,
+          weight,
+          payoutMax,
+          risk,
+          usedWeightFallback
+        };
+
+        const safeCheck = checkSafeMode(row, settings);
+        row.safe = safeCheck.safe;
+        row.safeReason = safeCheck.reason;
+
+        if (settings.safeMode && !row.safe) {
+          rejected.push(row);
+          continue;
+        }
+
+        rows.push(row);
+      }
+    }
+
+    rows.sort((a, b) => b.ev - a.ev);
+    rejected.sort((a, b) => b.ev - a.ev);
+
+    return {
+      best: rows[0] || null,
+      rows,
+      rejected,
+      consideredCount,
+      openRoleCount,
+      missingPayoutCount
+    };
+  }
+
+  function normaliseCpr(cpr) {
+    const n = Number(cpr || 0);
+    if (Number.isNaN(n)) return 0;
+    return Math.max(0, Math.min(100, n));
+  }
+
+  function calculateRisk(weight, payoutMax, cpr) {
+    const cprRatio = cpr / 100;
+    const affectOnSuccess = 1 - weight * (1 - cprRatio);
+    const cprDamage = payoutMax - (payoutMax * affectOnSuccess);
+    const riskDamageRatio = payoutMax ? cprDamage / payoutMax : 0;
+
+    let level = 'Low';
+    if (riskDamageRatio >= 0.15 || (weight >= 0.35 && cpr < 70)) {
+      level = 'High';
+    } else if (riskDamageRatio >= 0.08 || (weight >= 0.25 && cpr < 65)) {
+      level = 'Medium';
+    }
+
+    return {
+      cprDamage,
+      riskDamageRatio,
+      level
+    };
+  }
+
+  function checkSafeMode(row, settings) {
+    if (!settings.safeMode) {
+      return { safe: true, reason: 'Safe Mode off' };
+    }
+
+    const profile = SAFE_PROFILES[settings.safeModeProfile] || SAFE_PROFILES.balanced;
+
+    if (row.cpr < profile.cprFloor) {
+      return {
+        safe: false,
+        reason: `CPR ${row.cpr}% is below ${profile.label} Safe Mode floor of ${profile.cprFloor}%`
+      };
+    }
+
+    if (row.weight >= profile.highImpactWeight && row.cpr < profile.highImpactCprFloor) {
+      return {
+        safe: false,
+        reason: `High-impact role needs at least ${profile.highImpactCprFloor}% CPR in ${profile.label} Safe Mode`
+      };
+    }
+
+    if (row.risk.riskDamageRatio > profile.maxRiskDamageRatio) {
+      return {
+        safe: false,
+        reason: `Risk score too high for ${profile.label} Safe Mode`
+      };
+    }
+
+    return { safe: true, reason: `${profile.label} Safe Mode passed` };
+  }
+
+  function estPayout(weight, payoutMax, cpr, stallHours, members, filled) {
+    if (payoutMax == null || members <= 0) return null;
+
+    const expectedWeight = 1 / members;
+    const contributionBonus = (weight / expectedWeight) * (cpr / 100);
+    const individualPayout = (payoutMax / members) * Math.max(P, contributionBonus);
+    const affectOnSuccess = 1 - weight * (1 - (cpr / 100));
+    const cprDamage = payoutMax - (payoutMax * affectOnSuccess);
+    const stallBonus = (stallHours === 0 && filled === 0)
+      ? 1
+      : (1 + (K / (1 + Math.sqrt(stallHours))));
+
+    return individualPayout * stallBonus - cprDamage;
+  }
+
+  function renderResult(result, source, cacheAgeText) {
+    if (!panel) return;
+
+    const settings = getSettings();
+    const safeProfile = SAFE_PROFILES[settings.safeModeProfile] || SAFE_PROFILES.balanced;
+
+    if (!result.best) {
+      panel.innerHTML = `
+        ${renderHeader()}
+        ${renderSettingsSummary(settings, safeProfile, source, cacheAgeText)}
+        <div class="ace-oc-row ace-oc-warn">
+          No safe open roles found.
+        </div>
+        <div class="ace-oc-row ace-oc-small ace-oc-muted">
+          Open roles found: ${result.openRoleCount}.
+          ${settings.safeMode ? `${result.rejected.length} role(s) were filtered by Safe Mode.` : ''}
+          ${result.missingPayoutCount ? `${result.missingPayoutCount} role(s) skipped due to missing local payout data.` : ''}
+        </div>
+        ${renderRejectedSummary(result.rejected)}
+        ${renderFooterActions()}
+        ${renderFooterNote()}
+      `;
+
+      bindPanelActions();
+      return;
+    }
+
+    const best = result.best;
+    const crimeUrl = buildCrimeUrl(best.crime_id);
+
+    panel.innerHTML = `
+      ${renderHeader()}
+      ${renderSettingsSummary(settings, safeProfile, source, cacheAgeText)}
+
+      <div class="ace-oc-row" style="font-weight:700; margin-top:8px;">
+        Best OC Role:
+      </div>
+
+      <div class="ace-oc-row">
+        <a href="${crimeUrl}">${escapeHtml(best.crime)}</a>
+        — <b>${escapeHtml(best.role)}</b>
+      </div>
+
+      <div class="ace-oc-row">
+        EV: <b>$${Math.round(best.ev).toLocaleString()}</b>
+      </div>
+
+      <div class="ace-oc-row">
+        CPR: <b>${best.cpr}%</b>
+        · Stalls in: <b>${formatHours(best.stall)}</b>
+      </div>
+
+      <div class="ace-oc-row ace-oc-small">
+        Role impact: ${formatPercent(best.weight)}
+        · Risk: <span class="${riskClass(best.risk.level)}">${escapeHtml(best.risk.level)}</span>
+        · Est. risk damage: $${Math.round(best.risk.cprDamage).toLocaleString()}
+      </div>
+
+      <div class="ace-oc-row ace-oc-small ${best.safe ? 'ace-oc-good' : 'ace-oc-warn'}">
+        ${escapeHtml(best.safeReason)}
+      </div>
+
+      ${best.usedWeightFallback ? `
+        <div class="ace-oc-row ace-oc-small ace-oc-warn">
+          Weight fallback used for this crime. EV may be less accurate.
+        </div>
+      ` : ''}
+
+      <div class="ace-oc-row">
+        ${renderItemText(best)}
+      </div>
+
+      <div class="ace-oc-divider"></div>
+
+      <div class="ace-oc-row ace-oc-small ace-oc-muted">
+        Open roles: ${result.openRoleCount}
+        · Considered: ${result.consideredCount}
+        ${settings.safeMode ? `· Filtered: ${result.rejected.length}` : ''}
+      </div>
+
+      ${renderRejectedSummary(result.rejected)}
+      ${renderFooterActions()}
+      ${renderFooterNote()}
+    `;
+
+    bindPanelActions();
+  }
+
+  function renderHeader() {
+    const hasKey = !!getApiKey();
+
+    return `
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+        <div style="font-weight:700;">${escapeHtml(SCRIPT.name)}</div>
+        <div class="ace-oc-small ace-oc-muted">v${escapeHtml(SCRIPT.version)}</div>
+      </div>
+      <div class="ace-oc-row ace-oc-small">
+        API key:
+        ${hasKey ? '<span class="ace-oc-good">saved</span>' : '<span class="ace-oc-warn">not set</span>'}
+        <button class="ace-oc-btn" data-ace-action="set-key">Set/Change</button>
+        <button class="ace-oc-btn ace-oc-btn-danger" data-ace-action="clear-key">Clear</button>
+      </div>
+    `;
+  }
+
+  function renderSettingsSummary(settings, profile, source, cacheAgeText) {
+    return `
+      <div class="ace-oc-row ace-oc-small">
+        Safe Mode:
+        <button class="ace-oc-btn" data-ace-action="toggle-safe">
+          ${settings.safeMode ? 'On' : 'Off'}
+        </button>
+        <select data-ace-action="profile-select" style="background:#222; color:#eee; border:1px solid #555; border-radius:5px; padding:3px;">
+          ${Object.entries(SAFE_PROFILES).map(([key, p]) => `
+            <option value="${escapeHtml(key)}" ${key === settings.safeModeProfile ? 'selected' : ''}>
+              ${escapeHtml(p.label)}
+            </option>
+          `).join('')}
+        </select>
+      </div>
+
+      <div class="ace-oc-row ace-oc-small ace-oc-muted">
+        Filter: CPR ≥ ${profile.cprFloor}%,
+        high-impact CPR ≥ ${profile.highImpactCprFloor}%,
+        max risk ${Math.round(profile.maxRiskDamageRatio * 100)}%.
+      </div>
+
+      <div class="ace-oc-row ace-oc-small ace-oc-muted">
+        Source: ${source === 'cache' ? `cache${cacheAgeText ? ` (${escapeHtml(cacheAgeText)})` : ''}` : 'live API'}
+        · Cache:
+        <button class="ace-oc-btn" data-ace-action="toggle-cache">
+          ${settings.cacheEnabled ? 'On' : 'Off'}
+        </button>
+      </div>
+    `;
+  }
+
+  function renderRejectedSummary(rejected) {
+    if (!rejected || !rejected.length) return '';
+
+    const top = rejected.slice(0, 3);
+
+    return `
+      <div class="ace-oc-divider"></div>
+      <details>
+        <summary class="ace-oc-small ace-oc-warn" style="cursor:pointer;">
+          Safe Mode filtered ${rejected.length} role(s)
+        </summary>
+        <div class="ace-oc-small" style="margin-top:6px;">
+          ${top.map(r => `
+            <div class="ace-oc-row">
+              <b>${escapeHtml(r.crime)}</b> — ${escapeHtml(r.role)}
+              <br>
+              CPR ${r.cpr}% · Impact ${formatPercent(r.weight)}
+              <br>
+              <span class="ace-oc-muted">${escapeHtml(r.safeReason)}</span>
+            </div>
+          `).join('')}
+          ${rejected.length > top.length ? `
+            <div class="ace-oc-row ace-oc-muted">
+              Showing top ${top.length} by EV only.
+            </div>
+          ` : ''}
+        </div>
+      </details>
+    `;
+  }
+
+  function renderFooterActions() {
+    return `
+      <div class="ace-oc-divider"></div>
+      <div class="ace-oc-row">
+        <button class="ace-oc-btn ace-oc-btn-primary" data-ace-action="refresh">Refresh</button>
+        <button class="ace-oc-btn" data-ace-action="clear-cache">Clear Cache</button>
+      </div>
+    `;
+  }
+
+  function renderFooterNote() {
+    return `
+      <div class="ace-oc-divider"></div>
+      <div class="ace-oc-row ace-oc-small ace-oc-muted">
+        Member script only. No leader checks, no missing-item lists, no planning controls.
+        DOM fallback mode will be added later for members without faction API access.
+      </div>
+    `;
+  }
+
+  function renderMessage(title, detail) {
+    if (!panel) return;
+
+    panel.innerHTML = `
+      ${renderHeader()}
+      <div class="ace-oc-row ace-oc-warn">${escapeHtml(title)}</div>
+      ${detail ? `<div class="ace-oc-row ace-oc-small ace-oc-muted">${escapeHtml(detail)}</div>` : ''}
+      ${renderFooterActions()}
+      ${renderFooterNote()}
+    `;
+
+    bindPanelActions();
+  }
+
+  function renderApiError(error) {
+    if (!panel) return;
+
+    const code = error.code;
+    const msg = error.error || 'Unknown API error';
+    const explanation = explainApiError(code, msg);
+
+    panel.innerHTML = `
+      ${renderHeader()}
+      <div class="ace-oc-row ace-oc-bad">
+        API error ${code != null ? `#${escapeHtml(code)}` : ''}: ${escapeHtml(msg)}
+      </div>
+      <div class="ace-oc-row ace-oc-small ace-oc-muted">
+        ${explanation}
+      </div>
+      <div class="ace-oc-row">
+        <button class="ace-oc-btn ace-oc-btn-primary" data-ace-action="set-key">Set/Change API Key</button>
+        <button class="ace-oc-btn ace-oc-btn-danger" data-ace-action="clear-key">Clear Key</button>
+        <button class="ace-oc-btn" data-ace-action="refresh">Retry</button>
+      </div>
+      ${renderFooterNote()}
+    `;
+
+    bindPanelActions();
+  }
+
+  function explainApiError(code, msg) {
+    const lower = String(msg || '').toLowerCase();
+
+    if (
+      code === 2 ||
+      code === 7 ||
+      code === 10 ||
+      lower.includes('incorrect key') ||
+      lower.includes('invalid') ||
+      lower.includes('key')
+    ) {
+      return 'Your API key may be missing, incorrect, expired, or entered wrongly. Try setting/changing the key.';
+    }
+
+    if (
+      code === 13 ||
+      code === 18 ||
+      lower.includes('permission') ||
+      lower.includes('access') ||
+      lower.includes('faction')
+    ) {
+      return 'This endpoint needs faction crime access. A normal public-only key may not be enough. If members should not have faction API access, use the later DOM fallback version instead.';
+    }
+
+    if (
+      code === 5 ||
+      code === 14 ||
+      lower.includes('too many') ||
+      lower.includes('rate')
+    ) {
+      return 'This looks like an API rate-limit issue. The script has lightweight caching, so wait briefly or use cached data where possible.';
+    }
+
+    return 'The API rejected the request. Check the key, faction permissions, and whether the Torn API is currently available.';
+  }
+
+  function renderNetworkError(e) {
+    if (!panel) return;
+
+    panel.innerHTML = `
+      ${renderHeader()}
+      <div class="ace-oc-row ace-oc-bad">
+        Network/API request failed.
+      </div>
+      <div class="ace-oc-row ace-oc-small ace-oc-muted">
+        ${escapeHtml(e.message || String(e))}
+      </div>
+      <div class="ace-oc-row ace-oc-small ace-oc-muted">
+        This can happen on mobile/TornPDA if the connection is unstable, or if Torn/API access is temporarily blocked.
+      </div>
+      ${renderFooterActions()}
+      ${renderFooterNote()}
+    `;
+
+    bindPanelActions();
+  }
+
+  function bindPanelActions() {
+    if (!panel) return;
+
+    panel.querySelectorAll('[data-ace-action]').forEach(el => {
+      const action = el.getAttribute('data-ace-action');
+
+      if (action === 'profile-select') {
+        el.onchange = () => {
+          const settings = getSettings();
+          settings.safeModeProfile = el.value;
+          saveSettings(settings);
+          renderShellAndFetch(false);
+        };
+        return;
+      }
+
+      el.onclick = () => handleAction(action);
+    });
+  }
+
+  function handleAction(action) {
+    const settings = getSettings();
+
+    if (action === 'set-key') {
+      const existing = getApiKey();
+      const key = prompt(
+        'Enter Torn API key.\n\nThis member helper currently needs access to faction crimes.\nA public-only key may fail with a permission error.',
+        existing || ''
+      );
+
+      if (key && key.trim()) {
+        setApiKey(key.trim());
+        clearCache();
+        renderShellAndFetch(true);
+      }
+
+      return;
+    }
+
+    if (action === 'clear-key') {
+      const ok = confirm('Clear the saved Torn API key for this script?');
+      if (ok) {
+        clearApiKey();
+        clearCache();
+        renderNoKey();
+      }
+      return;
+    }
+
+    if (action === 'toggle-safe') {
+      settings.safeMode = !settings.safeMode;
+      saveSettings(settings);
+      renderShellAndFetch(false);
+      return;
+    }
+
+    if (action === 'toggle-cache') {
+      settings.cacheEnabled = !settings.cacheEnabled;
+      saveSettings(settings);
+      renderShellAndFetch(false);
+      return;
+    }
+
+    if (action === 'refresh') {
+      clearCache();
+      renderShellAndFetch(true);
+      return;
+    }
+
+    if (action === 'clear-cache') {
+      clearCache();
+      renderShellAndFetch(true);
+      return;
+    }
+  }
+
+  function buildCrimeUrl(crimeId) {
+    return `https://www.torn.com/factions.php?step=your&type=1#/tab=crimes&crimeId=${encodeURIComponent(crimeId)}`;
+  }
+
+  function buildItemMarketUrl(itemId, itemName = '') {
+    const params = new URLSearchParams({
+      itemID: String(itemId)
+    });
+
+    if (itemName) {
+      params.set('itemName', itemName);
+    }
+
+    return `https://www.torn.com/page.php?sid=ItemMarket#/market/view=search&${params.toString()}`;
+  }
+
+  function renderItemText(best) {
+    if (!best.itemId) {
+      return 'No item required';
+    }
+
+    const marketUrl = buildItemMarketUrl(best.itemId, best.itemName || '');
+
+    if (best.itemName) {
+      return `Requires item: <a href="${marketUrl}">${escapeHtml(best.itemName)}</a> (#${best.itemId})`;
+    }
+
+    return `Requires item: <a href="${marketUrl}">#${best.itemId}</a>`;
+  }
+
+  function riskClass(level) {
+    if (level === 'High') return 'ace-oc-bad';
+    if (level === 'Medium') return 'ace-oc-warn';
+    return 'ace-oc-good';
+  }
+
+  function formatHours(hours) {
+    const n = Number(hours || 0);
+    if (n < 1) return `${Math.round(n * 60)}m`;
+    return `${n.toFixed(1)}h`;
+  }
+
+  function formatPercent(value) {
+    return `${Math.round(Number(value || 0) * 100)}%`;
+  }
+
+  function escapeHtml(str) {
+    return String(str)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
+  }
+
+  function syncUiToPage() {
+    if (isCrimesTab()) {
+      createUi();
+    } else {
+      removeUi();
+    }
+  }
+
+  function installNavigationHooks() {
+    if (window.__aceOcMemberNavHooksInstalled) return;
+    window.__aceOcMemberNavHooksInstalled = true;
+
+    const originalPushState = history.pushState;
+    const originalReplaceState = history.replaceState;
+
+    history.pushState = function () {
+      const result = originalPushState.apply(this, arguments);
+      window.dispatchEvent(new Event('ace-oc-member-location-change'));
+      return result;
+    };
+
+    history.replaceState = function () {
+      const result = originalReplaceState.apply(this, arguments);
+      window.dispatchEvent(new Event('ace-oc-member-location-change'));
+      return result;
+    };
+
+    window.addEventListener('popstate', () => {
+      window.dispatchEvent(new Event('ace-oc-member-location-change'));
+    });
+
+    window.addEventListener('hashchange', () => {
+      window.dispatchEvent(new Event('ace-oc-member-location-change'));
+    });
+
+    window.addEventListener('ace-oc-member-location-change', syncUiToPage);
+  }
+
+  function installObserver() {
+    if (observer) return;
+
+    observer = new MutationObserver(() => {
+      if (location.href !== lastUrl) {
+        lastUrl = location.href;
+        syncUiToPage();
+      }
+    });
+
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true
+    });
+  }
+
+  injectStyles();
+  installNavigationHooks();
+  installObserver();
+  syncUiToPage();
+  setInterval(syncUiToPage, 1000);
+})();
