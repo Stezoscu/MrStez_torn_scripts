@@ -227,67 +227,40 @@
 
   function getInjectedBspFfStats() {
     const result = {
-      bsp: null,
-      ffEst: null,
-      source: 'Not detected'
+        bsp: null,
+        ffEst: null,
+        source: 'Not detected'
     };
 
-    const blocks = [...document.querySelectorAll('body *')]
-      .filter(isVisible)
-      .map(el => ({
-        text: cleanText(el.innerText || el.textContent || ''),
-        id: (el.id || '').toLowerCase(),
-        cls: (el.className || '').toString().toLowerCase()
-      }))
-      .filter(x => x.text && x.text.length < 700);
+    const pageText = cleanText(document.body.innerText || '');
 
-    const interesting = blocks.filter(x => {
-      const t = x.text.toLowerCase();
-      return (
-        x.id.includes('bsp') ||
-        x.id.includes('ff') ||
-        x.id.includes('spy') ||
-        x.cls.includes('bsp') ||
-        x.cls.includes('ff') ||
-        x.cls.includes('spy') ||
-        t.includes('bsp') ||
-        t.includes('fairfight') ||
-        t.includes('fair fight') ||
-        t.includes('est. stats') ||
-        t.includes('estimated stats') ||
-        t.includes('battle stat')
-      );
-    });
+    const tbsMatch =
+        pageText.match(/\bTBS\b[\s\S]{0,120}?\bSource\b[\s\S]{0,120}?([\d,.]+\s*(?:k|m|b|t|q)?)\s+[\dNaN.%]+\s+[\d.]+\s+BSP/i) ||
+        pageText.match(/\bTBS\b[\s\S]{0,180}?([\d,.]+\s*(?:k|m|b|t|q)?)\s+[\dNaN.%]+\s+[\d.]+\s+BSP/i);
 
-    for (const block of interesting) {
-      const t = block.text;
+    if (tbsMatch && looksLikeUsefulValue(tbsMatch[1])) {
+        result.bsp = normaliseStatValue(tbsMatch[1]);
+        result.source = 'Visible DOM';
+    }
 
-      if (!result.bsp && /\bBSP\b/i.test(t)) {
-        const m =
-          t.match(/\bBSP\b\s*[:\-]?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i) ||
-          t.match(/\bBattle\s*Stat(?:s)?\s*Prediction\b\s*[:\-]?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i);
+    if (!result.bsp) {
+        const bspMatch = pageText.match(/\bBSP\b\s*[:\-]?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i);
 
-        if (m && looksLikeUsefulValue(m[1])) {
-          result.bsp = normaliseStatValue(m[1]);
-          result.source = 'Visible DOM';
+        if (bspMatch && looksLikeUsefulValue(bspMatch[1])) {
+        result.bsp = normaliseStatValue(bspMatch[1]);
+        result.source = 'Visible DOM';
         }
-      }
+    }
 
-      if (!result.ffEst && /\b(FairFight|Fair Fight|FF)\b/i.test(t)) {
-        const m =
-          t.match(/\bEst\.?\s*Stats?\b\s*[:\-]?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i) ||
-          t.match(/\bEstimated\s*Stats?\b\s*[:\-]?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i) ||
-          t.match(/\bEstimated\s*Battle\s*Stats?\b\s*[:\-]?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i);
+    const ffEstMatch = pageText.match(/\bEst\.?\s*Stats?\b\s*[:\-]?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i);
 
-        if (m && looksLikeUsefulValue(m[1])) {
-          result.ffEst = normaliseStatValue(m[1]);
-          result.source = 'Visible DOM';
-        }
-      }
+    if (ffEstMatch && looksLikeUsefulValue(ffEstMatch[1])) {
+        result.ffEst = normaliseStatValue(ffEstMatch[1]);
+        result.source = 'Visible DOM';
     }
 
     return result;
-  }
+    }
 
   function cleanText(text) {
     return String(text).replace(/\s+/g, ' ').replace(/[()]/g, ' ').trim();
