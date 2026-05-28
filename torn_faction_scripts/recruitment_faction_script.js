@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         MrStez Torn Recruitment Checker
+// @name         MrStez Torn Recruitment Checker Updated
 // @namespace    mrstez.torn.recruitment
 // @version      1.8.0
 // @updateURL    https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_faction_scripts/recruitment_faction_script.js
