@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MrStez Torn Recruitment Checker Updated
 // @namespace    mrstez.torn.recruitment.checker
-// @version      1.8.2
+// @version      1.8.3
 // @updateURL    https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_faction_scripts/recruitment_faction_script.js
 // @downloadURL  https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_faction_scripts/recruitment_faction_script.js
 // @description  Compact recruitment checker with chat/mail templates and DOM-only BSP/FF estimate detection
@@ -232,63 +232,63 @@
         source: 'Not detected'
     };
 
-    // 1) FF estimate from visible text near the profile header
-    const pageText = cleanText(document.body.innerText || '');
+    const visibleTextBlocks = [...document.querySelectorAll('body *')]
+        .filter(isVisible)
+        .map(el => ({
+        el,
+        text: cleanText(el.innerText || el.textContent || ''),
+        id: (el.id || '').toLowerCase(),
+        cls: (el.className || '').toString().toLowerCase()
+        }))
+        .filter(x => x.text && x.text.length < 500);
 
-    const ffEstMatch = pageText.match(/\bEst\.?\s*Stats?\b\s*[:\-]?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i);
-    if (ffEstMatch && looksLikeUsefulValue(ffEstMatch[1])) {
-        result.ffEst = normaliseStatValue(ffEstMatch[1]);
+    const priorityBlocks = visibleTextBlocks.filter(x =>
+        x.id.includes('bsp') ||
+        x.id.includes('ff') ||
+        x.id.includes('spy') ||
+        x.cls.includes('bsp') ||
+        x.cls.includes('ff') ||
+        x.cls.includes('spy') ||
+        x.text.toLowerCase().includes('bsp') ||
+        x.text.toLowerCase().includes('ff') ||
+        x.text.toLowerCase().includes('battle stat') ||
+        x.text.toLowerCase().includes('fair fight') ||
+        x.text.toLowerCase().includes('fairfight') ||
+        x.text.toLowerCase().includes('est. stats') ||
+        x.text.toLowerCase().includes('estimated stats')
+    );
+
+    const searchText = priorityBlocks.map(x => x.text).join('\n');
+
+    const bspPatterns = [
+        /\bBSP\b\s*[:\-]?\s*\$?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i,
+        /\bBattle\s*Stat(?:s)?\s*Prediction\b\s*[:\-]?\s*\$?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i,
+        /\bEstimated\s*Stats?\b\s*[:\-]?\s*\$?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i,
+        /\bStats?\b\s*[:\-]?\s*\$?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i
+    ];
+
+    const ffEstPatterns = [
+        /\bEst\.?\s*Stats?\b\s*[:\-]?\s*\$?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i,
+        /\bEstimated\s*Stats?\b\s*[:\-]?\s*\$?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i,
+        /\bEstimated\s*Battle\s*Stats?\b\s*[:\-]?\s*\$?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i
+    ];
+
+    for (const pattern of bspPatterns) {
+        const match = searchText.match(pattern);
+        if (match && looksLikeUsefulValue(match[1])) {
+        result.bsp = match[1].replace(/\s+/g, '');
         result.source = 'Visible DOM';
+        break;
+        }
     }
 
-    // 2) BSP/TBS table: find a visible element containing Source + BSP, then read closest table/row text
-    const visibleEls = [...document.querySelectorAll('body *')].filter(isVisible);
-
-    for (const el of visibleEls) {
-        const txt = cleanText(el.innerText || el.textContent || '');
-
-        if (!/\bBSP\b/i.test(txt)) continue;
-
-        let container =
-        el.closest('tr') ||
-        el.closest('table') ||
-        el.closest('[class*="table" i]') ||
-        el.closest('[class*="row" i]') ||
-        el.parentElement;
-
-        for (let depth = 0; depth < 5 && container; depth++) {
-        const cText = cleanText(container.innerText || container.textContent || '');
-
-        const hasTableClues =
-            /\bTBS\b/i.test(cText) ||
-            /\bSource\b/i.test(cText) ||
-            /\bDate\b/i.test(cText) ||
-            /%\s*You/i.test(cText);
-
-        if (hasTableClues && /\bBSP\b/i.test(cText)) {
-            const m =
-            cText.match(/\bTBS\b[\s\S]{0,120}?([\d,.]+\s*(?:k|m|b|t|q)?)\s+[\dNaN.%]+\s+[\d.]+\s+BSP/i) ||
-            cText.match(/([\d,.]+\s*(?:k|m|b|t|q)?)\s+[\dNaN.%]+\s+[\d.]+\s+BSP/i);
-
-            if (m && looksLikeUsefulValue(m[1])) {
-            result.bsp = normaliseStatValue(m[1]);
-            result.source = 'Visible DOM';
-            return result;
-            }
-        }
-
-        container = container.parentElement;
-        }
-    }
-
-    // 3) Last fallback: use whole page text but with a looser pattern
-    const looseBspMatch =
-        pageText.match(/([\d,.]+\s*(?:k|m|b|t|q)?)\s+NaN%\s+[\d.]+\s+BSP/i) ||
-        pageText.match(/([\d,.]+\s*(?:k|m|b|t|q)?)\s+[\d,.]+%\s+[\d.]+\s+BSP/i);
-
-    if (looseBspMatch && looksLikeUsefulValue(looseBspMatch[1])) {
-        result.bsp = normaliseStatValue(looseBspMatch[1]);
+    for (const pattern of ffEstPatterns) {
+        const match = searchText.match(pattern);
+        if (match && looksLikeUsefulValue(match[1])) {
+        result.ffEst = match[1].replace(/\s+/g, '');
         result.source = 'Visible DOM';
+        break;
+        }
     }
 
     return result;
