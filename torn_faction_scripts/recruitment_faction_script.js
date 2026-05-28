@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MrStez Torn Recruitment Checker Updated
 // @namespace    mrstez.torn.recruitment.checker
-// @version      1.8.3
+// @version      1.8.4
 // @updateURL    https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_faction_scripts/recruitment_faction_script.js
 // @downloadURL  https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_faction_scripts/recruitment_faction_script.js
 // @description  Compact recruitment checker with chat/mail templates and DOM-only BSP/FF estimate detection
@@ -232,63 +232,57 @@
         source: 'Not detected'
     };
 
-    const visibleTextBlocks = [...document.querySelectorAll('body *')]
-        .filter(isVisible)
-        .map(el => ({
-        el,
-        text: cleanText(el.innerText || el.textContent || ''),
-        id: (el.id || '').toLowerCase(),
-        cls: (el.className || '').toString().toLowerCase()
-        }))
-        .filter(x => x.text && x.text.length < 500);
+    // BSP script table injection.
+    // Example:
+    // <div class="TDup_BSPProfileInjection">
+    //   TBS % You FF Source Date
+    //   1.4b NaN% 3.00 21 days ago
+    // </div>
+    const bspBox = document.querySelector('.TDup_BSPProfileInjection');
 
-    const priorityBlocks = visibleTextBlocks.filter(x =>
-        x.id.includes('bsp') ||
-        x.id.includes('ff') ||
-        x.id.includes('spy') ||
-        x.cls.includes('bsp') ||
-        x.cls.includes('ff') ||
-        x.cls.includes('spy') ||
-        x.text.toLowerCase().includes('bsp') ||
-        x.text.toLowerCase().includes('ff') ||
-        x.text.toLowerCase().includes('battle stat') ||
-        x.text.toLowerCase().includes('fair fight') ||
-        x.text.toLowerCase().includes('fairfight') ||
-        x.text.toLowerCase().includes('est. stats') ||
-        x.text.toLowerCase().includes('estimated stats')
-    );
+    if (bspBox) {
+        const firstDataRow =
+        bspBox.querySelector('tbody tr:nth-child(2)') ||
+        [...bspBox.querySelectorAll('tr')].find(tr => {
+            const txt = cleanText(tr.innerText || tr.textContent || '');
+            return /\d/.test(txt) && !/\bTBS\b/i.test(txt);
+        });
 
-    const searchText = priorityBlocks.map(x => x.text).join('\n');
+        if (firstDataRow) {
+        const firstCell =
+            firstDataRow.querySelector('td') ||
+            firstDataRow.children?.[0];
 
-    const bspPatterns = [
-        /\bBSP\b\s*[:\-]?\s*\$?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i,
-        /\bBattle\s*Stat(?:s)?\s*Prediction\b\s*[:\-]?\s*\$?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i,
-        /\bEstimated\s*Stats?\b\s*[:\-]?\s*\$?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i,
-        /\bStats?\b\s*[:\-]?\s*\$?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i
-    ];
+        const cellText = cleanText(firstCell?.innerText || firstCell?.textContent || '');
 
-    const ffEstPatterns = [
-        /\bEst\.?\s*Stats?\b\s*[:\-]?\s*\$?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i,
-        /\bEstimated\s*Stats?\b\s*[:\-]?\s*\$?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i,
-        /\bEstimated\s*Battle\s*Stats?\b\s*[:\-]?\s*\$?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i
-    ];
+        if (looksLikeUsefulValue(cellText)) {
+            result.bsp = normaliseStatValue(cellText);
+            result.source = 'Visible DOM';
+        }
+        }
 
-    for (const pattern of bspPatterns) {
-        const match = searchText.match(pattern);
-        if (match && looksLikeUsefulValue(match[1])) {
-        result.bsp = match[1].replace(/\s+/g, '');
-        result.source = 'Visible DOM';
-        break;
+        if (!result.bsp) {
+        const boxText = cleanText(bspBox.innerText || bspBox.textContent || '');
+        const m = boxText.match(/\bDate\b\s+([\d,.]+\s*(?:k|m|b|t|q)?)/i);
+
+        if (m && looksLikeUsefulValue(m[1])) {
+            result.bsp = normaliseStatValue(m[1]);
+            result.source = 'Visible DOM';
+        }
         }
     }
 
-    for (const pattern of ffEstPatterns) {
-        const match = searchText.match(pattern);
-        if (match && looksLikeUsefulValue(match[1])) {
-        result.ffEst = match[1].replace(/\s+/g, '');
+    // FF estimated stats from FairFight script.
+    const ffBox = document.querySelector('#ff-scouter-run-once');
+    const ffText = cleanText(ffBox?.innerText || ffBox?.textContent || document.body.innerText || '');
+
+    const ffEstMatch =
+        ffText.match(/\bEst\.?\s*Stats?\b\s*[:\-]?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i) ||
+        ffText.match(/\bEstimated\s*Stats?\b\s*[:\-]?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i);
+
+    if (ffEstMatch && looksLikeUsefulValue(ffEstMatch[1])) {
+        result.ffEst = normaliseStatValue(ffEstMatch[1]);
         result.source = 'Visible DOM';
-        break;
-        }
     }
 
     return result;
