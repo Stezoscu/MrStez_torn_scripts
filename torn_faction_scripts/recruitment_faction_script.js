@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MrStez Torn Recruitment Checker Updated
 // @namespace    mrstez.torn.recruitment.checker
-// @version      1.8.0
+// @version      1.8.2
 // @updateURL    https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_faction_scripts/recruitment_faction_script.js
 // @downloadURL  https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_faction_scripts/recruitment_faction_script.js
 // @description  Compact recruitment checker with chat/mail templates and DOM-only BSP/FF estimate detection
