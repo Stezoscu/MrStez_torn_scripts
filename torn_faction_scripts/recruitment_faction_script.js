@@ -232,30 +232,62 @@
         source: 'Not detected'
     };
 
+    // 1) FF estimate from visible text near the profile header
     const pageText = cleanText(document.body.innerText || '');
 
-    const tbsMatch =
-        pageText.match(/\bTBS\b[\s\S]{0,120}?\bSource\b[\s\S]{0,120}?([\d,.]+\s*(?:k|m|b|t|q)?)\s+[\dNaN.%]+\s+[\d.]+\s+BSP/i) ||
-        pageText.match(/\bTBS\b[\s\S]{0,180}?([\d,.]+\s*(?:k|m|b|t|q)?)\s+[\dNaN.%]+\s+[\d.]+\s+BSP/i);
-
-    if (tbsMatch && looksLikeUsefulValue(tbsMatch[1])) {
-        result.bsp = normaliseStatValue(tbsMatch[1]);
+    const ffEstMatch = pageText.match(/\bEst\.?\s*Stats?\b\s*[:\-]?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i);
+    if (ffEstMatch && looksLikeUsefulValue(ffEstMatch[1])) {
+        result.ffEst = normaliseStatValue(ffEstMatch[1]);
         result.source = 'Visible DOM';
     }
 
-    if (!result.bsp) {
-        const bspMatch = pageText.match(/\bBSP\b\s*[:\-]?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i);
+    // 2) BSP/TBS table: find a visible element containing Source + BSP, then read closest table/row text
+    const visibleEls = [...document.querySelectorAll('body *')].filter(isVisible);
 
-        if (bspMatch && looksLikeUsefulValue(bspMatch[1])) {
-        result.bsp = normaliseStatValue(bspMatch[1]);
-        result.source = 'Visible DOM';
+    for (const el of visibleEls) {
+        const txt = cleanText(el.innerText || el.textContent || '');
+
+        if (!/\bBSP\b/i.test(txt)) continue;
+
+        let container =
+        el.closest('tr') ||
+        el.closest('table') ||
+        el.closest('[class*="table" i]') ||
+        el.closest('[class*="row" i]') ||
+        el.parentElement;
+
+        for (let depth = 0; depth < 5 && container; depth++) {
+        const cText = cleanText(container.innerText || container.textContent || '');
+
+        const hasTableClues =
+            /\bTBS\b/i.test(cText) ||
+            /\bSource\b/i.test(cText) ||
+            /\bDate\b/i.test(cText) ||
+            /%\s*You/i.test(cText);
+
+        if (hasTableClues && /\bBSP\b/i.test(cText)) {
+            const m =
+            cText.match(/\bTBS\b[\s\S]{0,120}?([\d,.]+\s*(?:k|m|b|t|q)?)\s+[\dNaN.%]+\s+[\d.]+\s+BSP/i) ||
+            cText.match(/([\d,.]+\s*(?:k|m|b|t|q)?)\s+[\dNaN.%]+\s+[\d.]+\s+BSP/i);
+
+            if (m && looksLikeUsefulValue(m[1])) {
+            result.bsp = normaliseStatValue(m[1]);
+            result.source = 'Visible DOM';
+            return result;
+            }
+        }
+
+        container = container.parentElement;
         }
     }
 
-    const ffEstMatch = pageText.match(/\bEst\.?\s*Stats?\b\s*[:\-]?\s*([\d,.]+\s*(?:k|m|b|t|q)?)/i);
+    // 3) Last fallback: use whole page text but with a looser pattern
+    const looseBspMatch =
+        pageText.match(/([\d,.]+\s*(?:k|m|b|t|q)?)\s+NaN%\s+[\d.]+\s+BSP/i) ||
+        pageText.match(/([\d,.]+\s*(?:k|m|b|t|q)?)\s+[\d,.]+%\s+[\d.]+\s+BSP/i);
 
-    if (ffEstMatch && looksLikeUsefulValue(ffEstMatch[1])) {
-        result.ffEst = normaliseStatValue(ffEstMatch[1]);
+    if (looseBspMatch && looksLikeUsefulValue(looseBspMatch[1])) {
+        result.bsp = normaliseStatValue(looseBspMatch[1]);
         result.source = 'Visible DOM';
     }
 
