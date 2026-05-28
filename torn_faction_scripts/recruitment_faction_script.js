@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MrStez Torn Recruitment Checker Updated
 // @namespace    mrstez.torn.recruitment.checker
-// @version      1.8.4
+// @version      1.8.5
 // @updateURL    https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_faction_scripts/recruitment_faction_script.js
 // @downloadURL  https://raw.githubusercontent.com/Stezoscu/MrStez_torn_scripts/refs/heads/main/torn_faction_scripts/recruitment_faction_script.js
 // @description  Compact recruitment checker with chat/mail templates and DOM-only BSP/FF estimate detection
@@ -221,9 +221,40 @@
   }
 
   function hasSubscriberOrDonator(data) {
-    const text = JSON.stringify(data).toLowerCase();
-    return text.includes('subscriber') || text.includes('donator');
-  }
+    const profileRoot =
+        document.querySelector('#profileroot') ||
+        document.querySelector('.user-profile') ||
+        document.body;
+
+    const text = cleanText(profileRoot.innerText || profileRoot.textContent || '');
+
+    if (/\bSubscriber\b/i.test(text) || /\bDonator\b/i.test(text)) return true;
+
+    const possibleIcons = [...profileRoot.querySelectorAll('img, svg, i, span, div')]
+        .filter(isVisible)
+        .filter(el => {
+        const title = (el.getAttribute('title') || '').toLowerCase();
+        const alt = (el.getAttribute('alt') || '').toLowerCase();
+        const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+        const cls = (el.className || '').toString().toLowerCase();
+        const src = (el.getAttribute('src') || '').toLowerCase();
+
+        return (
+            title.includes('subscriber') ||
+            title.includes('donator') ||
+            alt.includes('subscriber') ||
+            alt.includes('donator') ||
+            aria.includes('subscriber') ||
+            aria.includes('donator') ||
+            cls.includes('subscriber') ||
+            cls.includes('donator') ||
+            src.includes('subscriber') ||
+            src.includes('donator')
+        );
+        });
+
+    return possibleIcons.length > 0;
+    }
 
   function getInjectedBspFfStats() {
     const result = {
